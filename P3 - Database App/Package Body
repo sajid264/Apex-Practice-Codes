@@ -1,0 +1,156 @@
+CREATE OR REPLACE PACKAGE BODY manage_orders
+AS
+    PROCEDURE add_product (p_product IN NUMBER,
+                           p_quantity IN NUMBER)
+    IS
+    BEGIN
+        -- Create the collection 'PRODUCTS' if it doesn't already exist for the session
+        IF NOT apex_collection.collection_exists (p_collection_name => 'PRODUCTS') THEN
+            apex_collection.create_collection(p_collection_name => 'PRODUCTS');
+        END IF;
+
+        -- Add the product as a new member (row) to the collection
+        -- p_n001 stores the product ID, p_n002 stores the quantity
+        apex_collection.add_member(p_collection_name => 'PRODUCTS',
+                                   p_n001            => p_product,
+                                   p_n002            => p_quantity);
+    END add_product;
+
+    ------------------------------------------------------------------------------------
+
+    PROCEDURE remove_product (p_product IN NUMBER)
+    IS
+        l_id NUMBER;
+    BEGIN
+        -- Only attempt to remove if the collection exists
+        IF apex_collection.collection_exists (p_collection_name => 'PRODUCTS') THEN
+            -- Find the specific sequence ID of the member to delete
+            SELECT seq_id
+            INTO   l_id
+            FROM   apex_collections a
+            WHERE  collection_name = 'PRODUCTS'
+            AND    a.n001 = p_product;
+
+            -- Delete the member from the collection using its sequence ID
+            apex_collection.delete_member(p_collection_name => 'PRODUCTS',
+                                          p_seq             => l_id);
+        END IF;
+    END remove_product;
+
+    ------------------------------------------------------------------------------------
+
+    FUNCTION get_quantity
+        RETURN NUMBER
+    IS
+        l_items NUMBER := 0;
+    BEGIN
+        -- If the cart collection exists, sum the quantity column (n002)
+        IF apex_collection.collection_exists (p_collection_name => 'PRODUCTS') THEN
+            SELECT SUM(n002)
+            INTO   l_items
+            FROM   apex_collections
+            WHERE  collection_name = 'PRODUCTS';
+        END IF;
+
+        RETURN l_items;
+    END get_quantity;
+
+    ------------------------------------------------------------------------------------
+
+    FUNCTION product_exists(p_product IN NUMBER)
+        RETURN NUMBER
+    IS
+        l_quantity NUMBER;
+    BEGIN
+        IF apex_collection.collection_exists (p_collection_name => 'PRODUCTS') THEN
+            -- Check for the existence of the product by selecting its quantity
+            SELECT a.n002
+            INTO   l_quantity
+            FROM   apex_collections a
+            WHERE  collection_name = 'PRODUCTS'
+            AND    a.n001 = p_product;
+
+            RETURN l_quantity;
+        ELSE
+            RETURN 0;
+        END IF;
+    EXCEPTION
+        -- If no row is found, it doesn't exist, so return 0
+        WHEN OTHERS THEN
+            RETURN 0;
+    END product_exists;
+
+    ------------------------------------------------------------------------------------
+
+    PROCEDURE clear_cart
+    IS
+    BEGIN
+        -- If the collection exists, truncate it (remove all members)
+        IF apex_collection.collection_exists(p_collection_name => 'PRODUCTS') THEN
+            apex_collection.truncate_collection(p_collection_name => 'PRODUCTS');
+        END IF;
+    END clear_cart;
+
+    ------------------------------------------------------------------------------------
+
+    FUNCTION customer_exists(p_customer_email IN VARCHAR2)
+        RETURN NUMBER
+    IS
+        l_customer customers.customer_id%TYPE;
+    BEGIN
+        -- Look up customer by email and return their ID
+        SELECT customer_id
+        INTO   l_customer
+        FROM   customers
+        WHERE  email_address = p_customer_email;
+
+        RETURN l_customer;
+    EXCEPTION
+        -- If not found, return 0
+        WHEN no_data_found THEN
+            RETURN 0;
+    END customer_exists;
+
+    ------------------------------------------------------------------------------------
+
+    PROCEDURE create_order (p_customer       IN VARCHAR2,
+                            p_customer_email IN VARCHAR2,
+                            p_store          IN NUMBER,
+                            p_order_id       OUT orders.order_id%TYPE,
+                            p_customer_id    OUT NUMBER)
+    IS
+    BEGIN
+        -- Step 1: Check if the customer exists; if not, create one
+        p_customer_id := customer_exists(p_customer_email);
+
+        IF p_customer_id = 0 THEN
+            INSERT INTO customers (full_name, email_address)
+            VALUES (p_customer, p_customer_email)
+            RETURNING customer_id INTO p_customer_id;
+        END IF;
+
+        -- Step 2: Create the main order record
+        INSERT INTO orders (order_datetime, customer_id, store_id, order_status)
+        VALUES (SYSDATE, p_customer_id, p_store, 'OPEN')
+        RETURNING order_id INTO p_order_id;
+
+        -- Step 3: Insert order items by selecting directly from the APEX collection
+        IF apex_collection.collection_exists (p_collection_name => 'PRODUCTS') THEN
+            INSERT INTO order_items (order_id, line_item_id, product_id, unit_price, quantity)
+            SELECT p_order_id,      -- The ID from the newly created order
+                   seq_id,          -- The line item number
+                   a.n001,          -- The product_id stored in the collection
+                   p.unit_price,    -- The product's current price from the products table
+                   a.n002           -- The quantity stored in the collection
+            FROM   apex_collections a,
+                   products p
+            WHERE  collection_name = 'PRODUCTS'
+            AND    p.product_id = a.n001;
+        END IF;
+
+        -- Step 4: Delete the collection to clear the cart
+        apex_collection.delete_collection(p_collection_name => 'PRODUCTS');
+
+    END create_order;
+
+END manage_orders;

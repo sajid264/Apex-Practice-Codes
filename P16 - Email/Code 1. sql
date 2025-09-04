@@ -1,0 +1,30 @@
+BEGIN
+    :P17_APP_ITEM_URL := 'http://' ||
+    OWA_UTIL.get_cgi_env('HTTP_HOST') || APEX_UTIL.PREPARE_URL(
+        p_url => 'f?p=' || :APP_ID ||
+        ':16:'||:APP_SESSION||'::NO::P16_ORDER:&P17_ORDER_ID.',
+        p_checksum_type => 'SESSION');
+END;
+
+
+Hello &P17_CUSTOMER_FULLNAME.,
+
+We're getting your order ready to be shipped. We will notify you when it has been sent.
+<a href="&P17_APP_ITEM_URL." target="_blank">View your order</a>
+If you have any questions contact us at noreply@oracle.com
+
+<html>
+<body>
+  <p>Hello &P17_CUSTOMER_FULLNAME.,</p><br>
+  <p>We're getting your order ready to be shipped. We will notify you when it has been sent.</p><br>
+  <p><a href="&P17_APP_ITEM_URL." target="_blank">View your order</a></p><br>
+  <p>If you have any questions contact us at noreply@oracle.com</p><br>
+</body>
+</html>
+
+
+UPDATE ORDERS
+SET STAR_RATING = :P16_REVIEW,
+    FEEDBACK = :P16_FEEDBACK
+WHERE ORDER_ID = :P16_ORDER;
+

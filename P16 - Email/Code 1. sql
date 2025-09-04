@@ -28,3 +28,48 @@ SET STAR_RATING = :P16_REVIEW,
     FEEDBACK = :P16_FEEDBACK
 WHERE ORDER_ID = :P16_ORDER;
 
+
+
+TO_DATE(TO_CHAR(order_datetime, 'MM/DD/YYYY'), 'MM/DD/YYYY') = 
+SYSDATE - 1
+AND EMAIL_FLAGGED = 'N'
+AND STAR_RATING IS NULL
+
+DECLARE
+    l_url CLOB;
+BEGIN
+    FOR x IN
+    (   SELECT
+            c.full_name,
+            c.email_address,
+            o.order_id,
+            TO_DATE(TO_CHAR(o.order_datetime, 'MM/DD/YYYY'),
+                'MM/DD/YYYY') as order_datetime
+        FROM customers c
+        JOIN orders o ON c.customer_id = o.customer_id
+        WHERE TO_DATE(TO_CHAR(o.order_datetime, 'MM/DD/YYYY'),
+            'MM/DD/YYYY') = sysdate
+        AND o.email_flagged = 'N'
+    )
+    loop
+        l_url := 'http://' || OWA_UTIL.get_cgi_env('HTTP_HOST')
+        || APEX_UTIL.PREPARE_URL(
+            p_url => 'f?p=' || :APP_ID ||
+            ':16:'||:APP_SESSION||'::NO::P16_ORDER:'||apex_json.stringify(
+            x.order_id),
+            p_checksum_type => 'SESSION');
+
+        apex_mail.send (
+            p_to                        => apex_json.stringify(x.email_address),
+            p_template_static_id        => 'PRODUCT_REVIEW_REMINDER',
+            p_placeholders              => '{' ||
+                ' "CUSTOMER_FULLNAME":"'  || apex_json.stringify(
+                x.full_name ) ||
+                ', "RATE_URL":"'        || apex_json.stringify(
+                apex_mail.get_instance_url || apex_page.get_url( 16 ) ) ||
+            '"}');
+
+        Update orders set email_flagged = 'Y' where order_id =
+        x.order_id;
+    end loop;
+end;
